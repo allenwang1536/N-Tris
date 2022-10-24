@@ -1,0 +1,455 @@
+include color
+include image
+include reactors
+include shared-gdrive("sprite-lib", "1oXiADjdC5WMA_iljrNdg7Dvo2mJC73_N")
+import sets as st
+
+data Position: position(x :: Number, y :: Number) end
+
+data State: state(
+      n :: Number,
+      pos :: Position, 
+      piece :: List<List<String>>,
+      pieces :: List<List<List<String>>>,
+      board :: List<List<String>>, 
+      score :: Number,
+      high-score :: Number,
+      game-state :: Number
+      ) 
+end
+
+# magic numbers determined by usual tetris dimensions
+width = 400
+height = 800
+x-cells = 10
+y-cells = 20
+cell-width = width / x-cells
+cell-height = height / y-cells
+bg-col = color(25, 25, 25, 1)
+background = rectangle(width, height, "solid", bg-col)
+
+colors = [list: 
+  "orange", "red", "blue", "purple", "magenta", "yellow", "green", "salmon", "spring-green", 
+  "cyan", "pale-turquoise", "dark-magenta", "lavender", "khaki"]
+
+# functions
+fun draw-block(col :: String) -> Image:
+  doc: ```Draws the block shapes that are displayed```
+  if (col == "black") or (col == "transparent"):
+    rectangle(cell-width, cell-height, "solid", col)
+  else:
+    base-black = rectangle(cell-width, cell-height, "solid", bg-col)
+    base-solid = overlay(rectangle(cell-width - 5, cell-height - 5, "solid", col), base-black)
+    outline = place-image(
+      rectangle(cell-width * 2, cell-height * 2, "outline", bg-col), 0, 0, base-solid)
+    corner-1 = place-image(circle(cell-width / 8, "solid", bg-col), 0, cell-height, outline)
+    corner-2 = place-image(circle(cell-width / 8, "solid", bg-col), 0, 0, corner-1)
+    corner-3 = place-image(circle(cell-width / 8, "solid", bg-col), cell-width, 0, corner-2)
+    place-image(circle(cell-width / 8, "solid", bg-col), cell-width, cell-height, corner-3)
+  end
+end
+
+
+fun create-init-board() -> List<List<String>>:
+  doc: ```Creates the inital board with all black tiles```
+  range(0, y-cells).map({(_): range(0, x-cells).map({(_): "black"})})
+end
+
+fun create-init-state(game-state :: Number) -> State:
+  doc: ```Creates the initial state with random parameters
+       given game-state```
+  n = num-random(4) + 3
+  pieces = generate-polygrams(create-init-polygram(n, n), n, 0, 0, st.empty-list-set)
+  state(n,
+    position((x-cells / 2) - num-floor(n / 2), 0), 
+    random-piece(pieces),
+    pieces,
+    create-init-board(), 0, 0, game-state)
+end
+
+fun ttf(str :: String, col :: String, size :: Number) -> Image:
+  doc: ```Creates standard font type used in game```
+  text-font(str, size, col, "Impact", "swiss", "normal", "normal", false)
+end
+
+fun ttf-gradient(str-list :: List<String>, col-list :: List<String>) -> Image:
+  doc: ```Creates a gradient of subsequent strings in str-list
+       corresponding to colors in col-list```
+  cases (List) str-list:
+    | empty => rectangle(0, 0, "solid", "dim-grey")
+    | link(f1, r1) =>
+      cases (List) col-list:
+        | empty => rectangle(0, 0, "solid", "dim-grey")
+        | link(f2, r2) =>
+          beside(ttf(f1, f2, cell-width * 3), ttf-gradient(r1, r2))
+      end
+  end
+end
+
+fun above-align-all(image-list :: List<Image>) -> Image:
+  doc: ```Aligns a group of images centered, where the n
+       image is above the n + 1 image```
+  image-list.foldl({(img, combined): above-align("center", combined, img)},
+    rectangle(0, 0, "solid", "black"))
+end
+
+fun create-start-screen(s :: State) -> Image:
+  doc: ```generates the intro scene for the game given state s```
+  place-image(
+    above-align-all([list:
+        ttf-gradient([list: "N", "-", "T", "R", "I", "S"],
+          [list: "red", "white", "purple", "orange", "blue", "green"]),
+        ttf(string-append("high score: ", num-to-string(s.high-score)), "orange", cell-width),
+        ttf(string-append("n = ", num-to-string(s.n)), "light-grey", cell-width),
+        ttf("space to start", "light-grey", cell-width),
+        ttf("press any number to change n", "dark-grey", cell-width / 2),
+        ttf("larger n scores more points!", "dark-grey", cell-width / 2)]), 200, 400,
+    background)
+end
+
+fun create-end-screen(s :: State) -> Image:
+  doc: ```Creates the end screen generated at the end of a game```
+  place-image(
+    above-align-all([list:
+        ttf-gradient([list: "G", "A", "M", "E"], [list: "red", "purple", "orange", "blue"]),
+        ttf-gradient([list: "O", "V", "E", "R"], [list: "magenta", "yellow", "green", "teal"]),
+        ttf(
+          string-append(
+            string-append(
+              string-append("score ", num-to-string(s.score)), " | high score "),
+            num-to-string(s.high-score)), "white", cell-width),
+        ttf("space to play again", "light-grey", cell-width)]), 200, 400, background)
+end
+
+
+fun random-piece(pieces :: List<List<List<String>>>) -> List<List<String>>:
+  doc: ```Creates, colors, and centeres a random piece from pieces```
+  piece = pieces.get(num-random(pieces.length()))
+  col = colors.get(num-random(colors.length()))
+  centered-piece = center-polygram(piece, piece.length())
+  centered-piece.map({(this-row): 
+      this-row.map({(this-cell):
+          if this-cell == "o":
+            "black"
+          else:
+            col
+          end})})
+end
+
+fun create-init-polygram(x :: Number, y :: Number) -> List<List<String>>:
+  doc: ```Creates an initial blank x by y polygram```
+  range(0, y).map({(this-row): range(0, x).map({(cell): "o"})})
+end
+
+fun set-value<T>(
+    list-of-lists :: List<List<T>>, x :: Number, y :: Number, val :: T) -> List<List<T>>:
+  doc: ```consumes lists-of-lists, (x,y) coordinate pair, and val; 
+       returns new lists-of-lists with val at the (x,y) location; 
+       x,y assumed to be within list boundaries```
+  
+  list-of-lists.set(y, list-of-lists.get(y).set(x, val))
+end
+
+fun rotate-piece(piece :: List<List<String>>) -> List<List<String>>:
+  doc: ```Rotates a piece clockwise```
+  fun adjust-row(this-row :: List<String>, x :: Number, y :: Number) -> List<String>:
+    doc: ```Translates the elements of a row```
+    cases (List) this-row: 
+      | empty => empty
+      | link(f, r) => 
+        opp-y = piece.length() - y - 1
+        link(
+          piece.get(x).get(opp-y), 
+          adjust-row(r, x + 1, y))
+    end
+  end
+
+  fun adjust-piece(this-piece :: List<List<String>>, y :: Number) -> List<List<String>>:
+    doc: ```Adjusts the rows of a piece```
+    cases (List) this-piece:
+      | empty => empty
+      | link(f, r) => 
+        link(adjust-row(f, 0, y), adjust-piece(r, y + 1))
+    end
+  end
+  
+  adjust-piece(piece, 0)
+end
+
+fun rotate-piece-ccw(piece :: List<List<String>>) -> List<List<String>>:
+  doc: ```Rotates a piece counterclockwise```
+  rotate-piece(rotate-piece(rotate-piece(piece)))
+end
+
+fun empty-rows(polygram :: List<List<String>>, num-empty-rows :: Number) -> Number:
+  doc: ```Counts the number of empty rows before the first
+       occurance of a non-black block```
+  cases (List) polygram:
+    | empty => num-empty-rows
+    | link(f, r) =>
+      if f.foldr({(cell, mt): (cell == "o") and mt}, true):
+        empty-rows(r, num-empty-rows + 1)
+      else:
+        num-empty-rows
+      end
+  end
+end
+  
+fun center-polygram(polygram :: List<List<String>>, n :: Number) -> List<List<String>>:
+  doc: ```Center aligns a polygram inside its n x n grid```
+  if num-abs(empty-rows(polygram, 0) - empty-rows(rotate-piece(rotate-piece(polygram)), 0)) > 1:
+    center-polygram(append(create-init-polygram(n, 1), polygram.take(n - 1)), n)
+  else if num-abs(empty-rows(rotate-piece(polygram), 0) - 
+      empty-rows(rotate-piece-ccw(polygram), 0)) > 1:
+    center-polygram(rotate-piece(append(create-init-polygram(n, 1), 
+          rotate-piece-ccw(polygram).take(n - 1))), n)
+  else:
+    polygram
+  end
+end
+
+fun generate-polygrams(polygram :: List<List<String>>, n :: Number, 
+    x :: Number, y :: Number, seen :: st.Set<String>) -> List<List<List<String>>>:
+  doc: ```generates all possible n-grams given a number n```
+  
+  if seen.member({x; y}):
+    empty
+  else if (x >= polygram.length()) or (x < 0) or (y >= polygram.length()) or (y < 0):
+    empty
+  else:
+    new-polygram = set-value(polygram, x, y, "x")
+    
+    if n == 1:
+      [list: new-polygram]
+    else:
+      generate-polygrams(new-polygram, n - 1, x + 1, y, seen.add({x; y})).append(
+        generate-polygrams(new-polygram, n - 1, x, y + 1, seen.add({x; y})).append(
+          generate-polygrams(new-polygram, n - 1, x - 1, y, seen.add({x; y})).append(
+            generate-polygrams(new-polygram, n - 1, x, y - 1, seen.add({x; y})))))
+    end
+  end
+end
+
+fun color-board(s :: State, x :: Number, y :: Number) -> String:
+  doc: ```Colors the elements of a board and the piece on top of it```
+  if (x >= s.pos.x) and (x < (s.pos.x + s.n)) and (y >= s.pos.y) and (y < (s.pos.y + s.n)):
+    if not(s.piece.get(y - s.pos.y).get(x - s.pos.x) == "black"):
+      s.piece.get(y - s.pos.y).get(x - s.pos.x) 
+    else:
+      if s.board.get(y).get(x) == "black":
+        "transparent"
+      else:
+        s.board.get(y).get(x)
+      end
+    end
+  else:
+    if s.board.get(y).get(x) == "black":
+      "transparent"
+    else:
+      s.board.get(y).get(x)
+    end
+  end
+end
+
+fun show-row(s :: State, y :: Number, back :: Image) -> Image:
+  range(0, x-cells).foldr({(x, img): place-image(
+        draw-block(color-board(s, x, y)), 
+        (x * cell-width) + (cell-width / 2), 
+        (y * cell-height) + (cell-height / 2), img)}, back)
+end
+
+fun show(s :: State) -> Image:
+  ask:
+    | s.game-state == 1 then: create-start-screen(s)
+    | s.game-state == 2 then:
+
+      back = range(0, y-cells).foldr({(y, img): show-row(s, y, img)}, background)
+      overlay-align("left", "top", 
+        ttf(num-to-string(s.score), "grey", cell-width * 3), back)
+      
+    | s.game-state == 3 then: create-end-screen(s)
+    | otherwise: raise("game state invalid")
+  end
+end
+
+
+fun piece-to-positions(s :: State) -> List<Position>:
+  doc: ```Converts a piece to a list of its constituent element positions```
+  range(0, s.n).foldr({(y, positions): append(positions, range(0, s.n).foldr({(x, positions2):
+            if not(s.piece.get(y).get(x) == "black"):
+              link(position(x + s.pos.x, y + s.pos.y), positions2)
+            else:
+              positions2
+            end}, empty))}, empty)
+end
+
+fun valid-position(s :: State) -> Boolean:
+  doc: ```Checks if a piece is on either side of the game board```
+  
+  piece-to-positions(s).foldr({(pos, valid):
+      ((0 <= pos.x) and (pos.x < x-cells)) and valid}, true)
+  and piece-to-positions(s).foldr({(piece-pos, valid1):
+      range(0, y-cells).foldr({(y, valid2):
+          range(0, x-cells).foldr({(x, valid3):
+              (not(position(x, y) == piece-pos) or (s.board.get(y).get(x) == "black"))
+              and valid3}, true)
+          and valid2}, true)
+      and valid1}, true)
+end
+
+fun superimpose(s :: State) -> List<List<String>>:
+  doc: ```Puts piece on board```
+  piece-positions = piece-to-positions(s)
+  range(0, y-cells).map({(y): range(0, x-cells).map({(x):
+          if piece-positions.member(position(x, y)):
+            s.piece.get(y - s.pos.y).get(x - s.pos.x)
+          else:
+            s.board.get(y).get(x)
+          end})})
+end
+
+fun collision(s :: State, floor :: List<Position>) -> Boolean:
+  doc: ```Checks if a piece has collided with a given body```
+
+  piece-to-positions(s).foldr({(piece-pos, collided):
+      floor.foldr({(floor-pos, collided-here):
+          (((floor-pos.y - piece-pos.y) <= 1) 
+            and (floor-pos.x == piece-pos.x)) 
+          or collided-here}, false) 
+      or collided}, false)
+end
+
+fun get-floor(s :: State) -> List<Position>:
+  doc: ```Finds the upper most colored square at each x```
+  range(0, x-cells).map({(x): range(0, y-cells).foldl({(y, highest):
+          if not(s.board.get(y).get(x) == "black") and (highest.y == y-cells):
+            position(x, y)
+          else:
+            highest
+          end}, position(x, y-cells))})
+end
+
+fun game-end(s :: State) -> Boolean:
+  doc: ```Checks if the game is over--if a piece is above y=3```
+  range(0, 3).foldr({(y, game-over): range(0, x-cells).foldr({(x, contains-piece):
+          not(s.board.get(y).get(x) == "black") or contains-piece}, false) or game-over}, false)
+end
+
+fun full-row(row :: List<String>) -> Boolean:
+  doc: ```Determines if a row is full```
+  row.foldr({(cell, full): not(cell == "black") and full}, true)
+end
+
+fun clear-row(s :: State) -> State:
+  doc: ```Clears row from board if full```
+  
+  cleared-board = s.board.filter({(row): not(full-row(row))})
+  num-cleared = y-cells - cleared-board.length()
+  new-board = append(range(0, num-cleared).map({(row): 
+        range(0, x-cells).map({(cell): "black"})}), cleared-board)
+  state(s.n, s.pos, s.piece, s.pieces, new-board, s.score + (num-sqr(num-cleared) * num-sqr(s.n)), 
+    s.high-score, s.game-state)
+end
+
+fun game-control(s :: State, str :: String) -> State:
+  doc: ```Controls how the user interacs with teh game```
+  if str == " ":
+    ask:
+      | s.game-state == 1 then:
+        state(s.n, position((x-cells / 2) - 2, 0), random-piece(s.pieces), s.pieces,
+          create-init-board(), 0, s.high-score, 2)
+      | s.game-state == 2 then: move-piece(s, str)
+      | s.game-state == 3 then: 
+        state(s.n, position((x-cells / 2) - 2, 0), random-piece(s.pieces), s.pieces,
+          create-init-board(), 0, s.high-score, 1)
+      | otherwise: raise("invalid game state")
+    end
+  else if s.game-state == 1:
+    cases (Option) string-to-number(str):
+      | none => s
+      | some(v) => state(v, s.pos, create-init-polygram(v, v), 
+          generate-polygrams(create-init-polygram(v, v), v, 0, 0, st.empty-list-set), 
+          s.board, 0, s.high-score, 1)
+    end
+  else:
+    move-piece(s, str)
+  end
+
+end
+
+
+fun logic(s :: State) -> State:
+  doc: ```Handles the game lose/gamestate change logic```
+  ask:
+    | s.game-state == 1 then: 
+      state(s.n, position(-100, -100), s.piece, s.pieces, create-init-board(), 0, s.high-score, 1)
+    | s.game-state == 2 then:
+      if game-end(s):
+        state(s.n, position((x-cells / 2) - 1, 0), random-piece(s.pieces), s.pieces, 
+          create-init-board(), s.score, 
+          num-max(s.score, s.high-score), 3)
+      else:
+        if collision(s, get-floor(s)):
+          clear-row(state(s.n, position((x-cells / 2) - 1, 0), random-piece(s.pieces), s.pieces, 
+              superimpose(s), s.score, s.high-score, s.game-state))
+        else:
+          state(s.n, position(s.pos.x, s.pos.y + 1), s.piece, s.pieces, s.board, s.score, 
+            s.high-score, 2)
+        end
+      end
+        
+    | s.game-state == 3 then:
+      state(s.n, position(-1000, 0), s.piece, s.pieces, create-init-board(), 
+        s.score, s.high-score, 3)
+  end
+  
+end
+
+fun move-piece(s :: State, str :: String) -> State:
+  doc: ```Handles translating, rotating, and moving down a piece```
+  fun new-s(cur-s :: State, control :: String) -> State:
+    ask:
+      | control == "up" then:
+        state(cur-s.n, cur-s.pos, rotate-piece(cur-s.piece), 
+          cur-s.pieces, cur-s.board, cur-s.score, cur-s.high-score, cur-s.game-state)
+      | control == "left" then:
+        state(cur-s.n, position(cur-s.pos.x - 1, cur-s.pos.y), 
+          cur-s.piece, cur-s.pieces, cur-s.board, cur-s.score, cur-s.high-score, cur-s.game-state)
+      | control == "right" then:
+        state(cur-s.n, position(cur-s.pos.x + 1, cur-s.pos.y), 
+          cur-s.piece, cur-s.pieces, cur-s.board, cur-s.score, cur-s.high-score, cur-s.game-state)
+      | control == "down" then:
+        new-state = state(cur-s.n, position(cur-s.pos.x, cur-s.pos.y + 1), 
+          cur-s.piece, cur-s.pieces, cur-s.board, cur-s.score, cur-s.high-score, cur-s.game-state)
+        if collision(new-state, get-floor(cur-s)):
+          cur-s
+        else:
+          new-state
+        end
+      | otherwise:
+      cur-s
+    end
+  end
+
+  if valid-position(new-s(s, str)):
+    new-s(s, str)
+  else:
+    s
+  end
+ 
+end
+
+
+# -------
+
+
+r = reactor:
+  seconds-per-tick: 0.4,
+  title: "N-TRIS",
+  on-tick: logic,
+  on-key: game-control,
+  init: create-init-state(1),
+  to-draw: show
+end
+
+interact(r)
