@@ -7,4 +7,6 @@ N-TRIS is the same concept, but for all the unique permutations of n unit square
 
 Utilizes the Pyret library (https://code.pyret.org/editor)
 
+Video Demonstration: https://www.youtube.com/watch?v=pG5Igci5c_g&t=6s
+
 Worked on this project together with Woody Hulse
